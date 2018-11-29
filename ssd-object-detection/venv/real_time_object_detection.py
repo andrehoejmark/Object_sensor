@@ -44,6 +44,7 @@ fps = FPS().start()
 # used for matching projected LIDAR points with bounding boxes
 boxes = []
 image_points = []
+distances = []
 mutex = Lock()
 
 # initialize and start background thread to receive, project and hand over projected LIDAR points
@@ -53,11 +54,12 @@ project_thread.start()
 
 
 # called from the projection script when a new batch of points have been received  & projected
-def projection_callback(projected_object_coords):
-    global image_points, boxes, mutex
+def projection_callback(projected_object_coords, object_distances):
+    global image_points, distances, boxes, mutex
     # acquire lock for image_points to prevent concurrent updates
     mutex.acquire()
     image_points = projected_object_coords
+    distances = object_distances
     mutex.release()
 
 
@@ -67,6 +69,7 @@ class BoundingBox:
         self.box = box_coords
         self.class_id = idx
         self.projected_points = []
+        self.distances = []
         self.dimensions = [0, 0]
         self.pixel_dimensions = (box[2] - box[0], box[3] - box[1])
 
@@ -126,24 +129,25 @@ while True:
         # acquire lock for image_points to prevent concurrent updates
         mutex.acquire()
         # loop over projected points
-        for point in image_points:
+        for point_index, point in enumerate(image_points):
             # loop over the bounding boxes
             for box in boxes:
                 if box.is_inside(point):
                     box.projected_points.append(point)
+                    box.distances.append(distances[point_index])
                     break
 
         # determine real distance and real dimensions to every bounding box
         for box in boxes:
-            # calculate distance
-            box.distance = min(box.projected_points)
-            # calculate width
+            # estimate distance as the smallest distance of all the projected points within the bounding box
+            box.distance = min(box.distances)
+            # estimate real width of detected object
             pixel_width = box.box[2] - box.box[0]
             box.dimensions[0] = (pixel_width / projection.focal_length) * box.distance
-            # calculate height
+            # estimate real height of detected object
             box.dimensions[1] = (box.pixel_dimensions[1] / box.pixel_dimensions[0]) * box.dimensions[0]
 
-        # wait for next batch of points from background thread
+        # wait for next batch of points from background thread (received in a callback function)
         image_points.clear()
         mutex.release()
 
