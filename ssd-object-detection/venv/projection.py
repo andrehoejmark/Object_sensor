@@ -68,4 +68,8 @@ def run(callback):
                 #print('Projected LIDAR points to camera view: {}'.format(imagePoints))
                 # pass the points to the object-detection script for matching to its detected bounding boxes
                 t = Thread(target=callback, args=(imagePoints, distances))
+                # run in background
+                t.daemon = True
+                t.start()
                 coords.clear()
+                distances.clear()
