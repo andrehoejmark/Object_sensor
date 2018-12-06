@@ -1,6 +1,5 @@
-#!/usr/bin/env python
 
-'''
+"""
 camera calibration for distorted images with chess board samples
 reads distorted images, calculates the calibration and write undistorted images
 usage:
@@ -9,10 +8,7 @@ default values:
     --debug:    ./output/
     --square_size: 1.0
     <image mask> defaults to data/left*.jpg
-'''
-
-# Python 2/3 compatibility
-from __future__ import print_function
+"""
 
 import numpy as np
 import cv2 as cv
@@ -27,6 +23,7 @@ import getopt
 from glob import glob
 import json
 import codecs
+
 
 def processImage(fn):
     print('processing %s... ' % fn)
@@ -53,7 +50,8 @@ def processImage(fn):
         return None
 
     print('           %s... OK' % fn)
-    return (corners.reshape(-1, 2), pattern_points)
+    return corners.reshape(-1, 2), pattern_points
+
 
 def calibrate_camera(debug_dir='./ouput/', square_size=1.0, num_threads=4, img_mask='./data/left*.jpg'):
     img_names = glob(img_mask)
