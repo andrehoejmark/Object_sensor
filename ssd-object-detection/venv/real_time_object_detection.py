@@ -1,21 +1,22 @@
 
 """
-Detects objects from video in real-time, and calculates and displays distance
-and dimensions to these objects.
+Detects objects from video in real-time, and estimates and displays distance to
+and dimensions of these objects.
 """
 
 # import the necessary packages
 from imutils.video import VideoStream
-from imutils.video import FPS
 import projection
 from threading import Thread, Lock
 import numpy as np
+import cv2
+import pandas as pd
 import argparse
 import imutils
 import time
-import cv2
 import copy
 
+# object detector parameters
 prototxt = "MobileNetSSD_deploy.prototxt.txt"
 model = "MobileNetSSD_deploy.caffemodel"
 min_confidence = 0.2
@@ -35,7 +36,14 @@ net = cv2.dnn.readNetFromCaffe(prototxt, model)
 boxes = []
 image_points = []
 distances = []
+angles = []
 mutex = Lock()
+
+# used for fps calculation
+tick_freq = cv2.getTickFrequency()
+
+# indicates whether to test with real LIDAR test data or not
+test_with_test_data = True
 
 
 # represents a bounding box, along with projected points falling within its bounds
@@ -46,6 +54,7 @@ class BBox:
         self.class_id = idx
         self.projected_points = []
         self.distances = []
+        self.angles = []
         self.dimensions = [0, 0]
         self.pixel_dimensions = (self.box[2] - self.box[0], self.box[3] - self.box[1])
 
@@ -57,54 +66,59 @@ class BBox:
 class SSDObjectDetector:
 
     # called from the projection script when a new batch of points has been received & projected
-    def receive_projected_points(self, projected_object_coords, object_distances):
-        global image_points, distances, mutex
+    def receive_projected_points(self, projected_object_coords, object_distances, object_angles):
+        global image_points, distances, angles, mutex
         # acquire lock for image_points to prevent concurrent updates
         mutex.acquire()
         # make deep copies of the received data to store; since the originals will be removed after function call
         image_points = copy.deepcopy(projected_object_coords)
         distances = copy.deepcopy(object_distances)
+        angles = copy.deepcopy(object_angles)
         mutex.release()
 
     def run(self):
-        global boxes, image_points, distances, mutex, CLASSES, COLORS, min_confidence
+        global boxes, image_points, distances, mutex
         # initialize the video stream and allow the cammera sensor to warmup
         vs = VideoStream(src=0).start()
         time.sleep(2.0)
-        # initialize the FPS counter
-        fps = FPS().start()
         # loop over the frames from the video stream
         while True:
-            # grab the frame from the threaded video stream and resize it
-            # to have a maximum width of 400 pixels
-            frame = vs.read()
-            frame = imutils.resize(frame, width=400)
+            # used for fps calculation
+            start_time = cv2.getTickCount()
+            if test_with_test_data:  # test with test image
+                # grab the test image from disk
+                frame = cv2.imread("data/framedata.png", 1)
+            else:  # use camera to catch frames
+                # grab the frame from the threaded video stream
+                frame = vs.read()
+
+            # resize frame to have a maximum width of 400 pixels
+            imutils.resize(frame, 400)
 
             # grab the frame dimensions and convert it to a blob
             (h, w) = frame.shape[:2]
-            blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)),
-                                         0.007843, (300, 300), 127.5)
+            blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
 
             # pass the blob through the network and obtain the detections and
             # predictions
             net.setInput(blob)
             detections = net.forward()
 
-            # clear the stored bounding boxes from previous frame
+            # clear the stored bounding boxes from previous frames if new points have been received
             if len(image_points) > 0:
                 boxes.clear()
 
             # loop over the detections
             for i in np.arange(0, detections.shape[2]):
-                # extract the confidence (i.e., probability) associated with
+                # extract the confidence (i.e. probability) associated with
                 # the prediction
                 confidence = detections[0, 0, i, 2]
 
-                # filter out weak detections by ensuring the `confidence` is
+                # filter out weak detections by ensuring the confidence is
                 # greater than the minimum confidence
                 if confidence > min_confidence:
                     # extract the index of the class label from the
-                    # `detections`, then compute the (x, y)-coordinates of
+                    # detections, then compute the (x, y)-coordinates of
                     # the bounding box for the object
                     idx = int(detections[0, 0, i, 1])
                     box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
@@ -115,13 +129,10 @@ class SSDObjectDetector:
                         boxes.append(BBox([startX, startY, endX, endY], idx))
 
                     # draw the prediction on the frame
-                    label = "{}: {:.2f}%".format(CLASSES[idx],
-                                                 confidence * 100)
-                    cv2.rectangle(frame, (startX, startY), (endX, endY),
-                                  COLORS[idx], 2)
+                    label = "{}: {:.2f}%".format(CLASSES[idx], confidence * 100)
+                    cv2.rectangle(frame, (startX, startY), (endX, endY), COLORS[idx], 2)
                     y = startY - 15 if startY - 15 > 15 else startY + 15
-                    #cv2.putText(frame, label, (startX, y),
-                                #cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[idx], 2)
+                    cv2.putText(frame, label, (startX, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[idx], 2)
 
             # new batch of projected LIDAR points received?
             if len(image_points) > 0:
@@ -134,6 +145,7 @@ class SSDObjectDetector:
                         if box.is_inside(point):
                             box.projected_points.append(point)
                             box.distances.append(distances[point_index])
+                            box.angles.append(angles[point_index])
                             break
 
                 # determine real distance and real dimensions to every bounding box
@@ -143,6 +155,7 @@ class SSDObjectDetector:
                         continue
                     # estimate distance as the smallest distance of all the projected points within the bounding box
                     box.distance = min(box.distances)
+                    box.angle = min(box.angles)
                     # estimate real width of detected object
                     pixel_width = box.box[2] - box.box[0]
                     box.dimensions[0] = (pixel_width / projection.focal_length) * box.distance
@@ -154,36 +167,46 @@ class SSDObjectDetector:
                 distances.clear()
                 mutex.release()
 
-            # plot dimensions and distance for every bounding box on the current frame
+            # plot dimensions of and distance to every detected object on the current frame
             for box in boxes:
                 # continue if no projected points fell within this box's bounds
                 if len(box.projected_points) == 0:
                     continue
-                x = box.box[0] + 20
+                x = box.box[0] - 20
                 y = box.box[1] + 20
-                label = "Width: {:.2f}, height: {:.2f}, distance: {:.2f}".format(box.dimensions[0],
-                                                                                 box.dimensions[1],
-                                                                                 box.distance)
-                cv2.putText(frame, label, (x, y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[box.class_id], 2)
+                print("Distances in box:" + str(box.distances))
+                print("Points in box:" + str(box.projected_points))
+                print("Angles in box:" + str(box.angles))
+                label = "W:{:.2f},H:{:.2f},D:{:.2f}".format(box.dimensions[0],
+                                                            box.dimensions[1],
+                                                            box.distance)
+                cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[box.class_id], 2)
+
+                # plot the projected points on the bounding box for debugging purposes
+                if test_with_test_data:
+                    for index, point in enumerate(box.projected_points):
+                        #print("Point: " + str(point))
+                        #print("Distance: " + str(box.distances[index]))
+                        #print("Min distance" + str(box.distance))
+                        #print("Min angle" + str(box.angle))
+                        cv2.circle(frame, (int(point[0]), int(point[1])), 2, (0, 255, 255), 1)
+
 
             # show the output frame
-            cv2.imshow("Object distance and dimensions", frame)
+            cv2.imshow("Object Distance and Dimensions", frame)
             key = cv2.waitKey(1) & 0xFF
 
-            # if the `q` key was pressed, break from the loop
+            # calculate and display the fps of the current frame
+            end_time = cv2.getTickCount()
+            fps = (end_time - start_time) / tick_freq
+            label = "{:.2f} FPS".format(fps)
+            cv2.putText(frame, label, (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
+            # break from the loop if 'q' was pressed
             if key == ord("q"):
                 break
 
-            # update the FPS counter
-            fps.update()
-
-        # stop the timer and display FPS information
-        fps.stop()
-        print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()))
-        print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
-
-        # do a bit of cleanup
+        # cleanup
         cv2.destroyAllWindows()
         vs.stop()
 

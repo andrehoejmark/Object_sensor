@@ -1,22 +1,13 @@
 
 """
-camera calibration for distorted images with chess board samples
-reads distorted images, calculates the calibration and write undistorted images
-usage:
-    calibrate.py [--debug <output path>] [--square_size] [<image mask>]
-default values:
-    --debug:    ./output/
-    --square_size: 1.0
-    <image mask> defaults to data/left*.jpg
+Camera calibration for distorted images with chess board samples:
+reads distorted images and calculates and returns the calibration.
 """
 
+# import the necessary packages
 import numpy as np
 import cv2 as cv
-
-# local modules
 from common import splitfn
-
-# built-in modules
 import os
 import sys
 import getopt
@@ -24,15 +15,21 @@ from glob import glob
 import json
 import codecs
 
+# global variables and constants
+debug_dir = './output/'
+pattern_size = (9, 6)
+pattern_points = []
 
-def processImage(fn):
+
+def process_image(fn):
+    # processes one of the calibration images
+    global pattern_points
     print('processing %s... ' % fn)
     img = cv.imread(fn, 0)
     if img is None:
         print("Failed to load", fn)
         return None
 
-    assert w == img.shape[1] and h == img.shape[0], ("size: %d x %d ... " % (img.shape[1], img.shape[0]))
     found, corners = cv.findChessboardCorners(img, pattern_size)
     if found:
         term = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_COUNT, 30, 0.1)
@@ -50,15 +47,17 @@ def processImage(fn):
         return None
 
     print('           %s... OK' % fn)
+    # return image points and object points for the image
     return corners.reshape(-1, 2), pattern_points
 
 
-def calibrate_camera(debug_dir='./ouput/', square_size=1.0, num_threads=4, img_mask='./data/left*.jpg'):
+def calibrate_camera(square_size=1.0, num_threads=4, img_mask='./data/left*.jpg'):
+    # calibrates camera and returns camera parameters
+    global pattern_points
     img_names = glob(img_mask)
     if not os.path.isdir(debug_dir):
         os.mkdir(debug_dir)
 
-    pattern_size = (9, 6)
     pattern_points = np.zeros((np.prod(pattern_size), 3), np.float32)
     pattern_points[:, :2] = np.indices(pattern_size).T.reshape(-1, 2)
     pattern_points *= square_size
@@ -73,14 +72,15 @@ def calibrate_camera(debug_dir='./ouput/', square_size=1.0, num_threads=4, img_m
         print("Run with %d threads..." % num_threads)
         from multiprocessing.dummy import Pool as ThreadPool
         pool = ThreadPool(num_threads)
-        chessboards = pool.map(processImage, img_names)
+        chessboards = pool.map(process_image, img_names)
 
     chessboards = [x for x in chessboards if x is not None]
     for (corners, pattern_points) in chessboards:
         img_points.append(corners)
         obj_points.append(pattern_points)
 
-    # calculate camera parameters
+    # calculate the camera parameters
     rms, camera_matrix, dist_coefs, rvecs, tvecs = cv.calibrateCamera(obj_points, img_points, (w, h), None, None)
 
-    return camera_matrix, dist_coefs, rvecs, tvecs
+    # return the camera parameters
+    return camera_matrix, dist_coefs, np.array(rvecs), np.array(tvecs)

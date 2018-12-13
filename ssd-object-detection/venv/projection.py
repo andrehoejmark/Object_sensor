@@ -1,46 +1,49 @@
 
 """
-Reads LIDAR point cloud data [3D-coordinates) from serial port (connected to Arduino),
-projects these to the 2D camera-plane, and passes them to the object-detection script
-through a callback.
+Reads LIDAR point cloud data over serial port, projects these to the 2D camera-plane,
+and passes them to the object-detection script.
 """
 
+# import the necessary packages
 import numpy as np
-import cv2 as cv
-
-# built-in modules
+import cv2
+import pandas as pd
 import os
 import sys
 import serial
 import string
 import time
+import copy
+from math import *
 from threading import Thread
 from threading import Lock
-
-# custom modules
 import calibrate
 
 # global variables and constants
-num_points_per_batch = 360  # project and send this many points at a time
+num_points_per_batch = 140  # project and send this many points at a time
 inches_per_meter = 39.3700787
-pixels_per_inches = 96  # usually between 72-130; check with the used camera
-fov = 53.50  # horizontal fov of camera (degrees)
-fov_half = fov / 2.0
-image_width = 300
-image_height = 300
-constant_y = 10  # the constant y in the image corresponding to the LIDAR points
-dist_lidar_to_cam_meter = 0.004  # 4 cm between camera lens center to LIDAR laser output
+pixels_per_inches = 96.0  # usually between 72-130; check with the used camera
+
+fov = 62.2  # horizontal fov of camera
+image_width = 300.0
+image_height = 300.0
+dist_lidar_to_cam_meter = 0.004  # 4 cm between camera lens center to LIDAR laser output (LIDAR below camera)
 y_image = dist_lidar_to_cam_meter * inches_per_meter * pixels_per_inches  # the constant y in the images
+y_image += image_height / 2.0  # center of image is in origo
+#focal_length = 0.0360 * inches_per_meter * pixels_per_inches  # focal length of camera (3.60 mm here)
+offset_angle = 21.0  # angle offset between LIDAR 0° and camera right-side-fov angle relative to LIDAR 0°
 
-focal_length = 0.0360 * inches_per_meter * pixels_per_inches  # focal length of camera (3.60 mm here)
-#coords = []  # the 3D LIDAR coordinates received from Arduino over serial port
-positions = []  # the angles associated with each 3D point
-distances = []  # the distances associated with each 3D point
-#ser = serial.Serial('/dev/tty.usbmodem14301', baudrate=9600)  # the serial port over which to receive LIDAR data
+ser = None  # the serial port
 
-test_with_fake_data = True  # indicates whether to produce fake LIDAR data or not
-fake_data = None  # used to producing fake LIDAR data for testing purposes
-fake_data_mutex = Lock()  # used for simulating blocking of serial.Serial.readline() call
+positions = []  # the angles associated with each LIDAR point
+distances = []  # the distances associated with each LIDAR point
+
+is_3d = False  # indicates whether LIDAR got y-movement or not
+test_with_fake_data = False  # indicates whether to produce fake LIDAR data or not
+test_with_test_data = True  # indicates whether to test with real LIDAR test data or not
+
+fake_data = None
+fake_data_mutex = Lock()
 
 
 def produce_fake_data_threaded():
@@ -60,7 +63,7 @@ def produce_fake_lidar_data():
         fake_data_mutex.release()
         fake_angle = (fake_angle + 0.5) % 180.0
         fake_distance = np.random.uniform(0.0, 100.0)
-        #time.sleep(0.01)  # simulate delay
+        time.sleep(0.01)  # simulate delay
 
 
 def read_fake_data_blocking():
@@ -70,80 +73,131 @@ def read_fake_data_blocking():
         fake_data_mutex.acquire()
         if fake_data is not None:
             break
-    fake_data_copy = fake_data
+    fake_data_copy = copy.deepcopy(fake_data)
     fake_data_mutex.release()
     angle, distance = fake_data_copy.split(" ")
     angle, distance = float(angle), float(distance)
     return angle, distance
 
 
-def retrieve_object_coords(coords_string):
-    # retrieve (parse) the 3D coordinates
-    # (might have to convert coordinates from LIDAR
-    # from meter units to pixel units through camera's DPI - dots (pixels) per inch)
-    x, y, z, distance = coords_string.split(' ')
-    return [x, y, z, distance]
+def compute_object_coord(angle_x, angle_y, distance):
+    # computes and returns the 3D coordinate corresponding
+    # to the passed angles and distance
+    angle_x, angle_y = angle_x * pi / 180.0, angle_y * pi / 180.0
+    if angle_y != 0.0:
+        # 3D polar coordinates
+        x = distance * cos(angle_x) * sin(angle_y)
+        z = distance * sin(angle_x) * sin(angle_y)
+        y = distance * cos(angle_y) + y_image
+    else:
+        # 2D polar coordinates
+        x = distance * cos(angle_x)
+        z = distance * sin(angle_x)
+        y = y_image
+    return x, y, z
 
 
 def calc_image_point(angle):
     # set 0 angle at center of image since angle is 0-180 left to right
-    global y_image
-    angle = 90.0 - angle
-    x_image =  angle / fov_half * image_width
-    return x_image, y_image
+    x_image = image_width - (((angle - offset_angle) / fov) * image_width)
+    return int(x_image), int(y_image)
 
 
 def get_lidar_input():
     # returns either fake or real LIDAR data
+    # is_3D indicates if LIDAR moves in y-axis or not
+    global ser
     if test_with_fake_data:
         return read_fake_data_blocking()
     else:
-        input = str(ser.readline())
-        input = input[0:len(input) - 2]
-        angle, distance = input.split(" ")
-        return float(angle), float(distance)
+        if ser is None:
+            ser = serial.Serial('/dev/tty.usbmodem141201',
+                                baudrate=9600)  # the serial port over which to receive LIDAR data
+        # parse input from Arduino
+        angle_x = str(ser.readline())
+        is_flipped = 'x' != angle_x[0]
+        distance = str(ser.readline())
+        if is_3d:
+            # TODO: handle if angle_y is "flipped" with either angle_x or distance
+            angle_y = str(ser.readline())
+            angle_y = angle_y[1: -2]
+            #print("angle_y: " + str(angle_y))
+        angle_x, distance = angle_x[1: -2], distance[1: -2]
+        if is_flipped:
+            tmp = angle_x
+            angle_x = distance
+            distance = tmp
+        #print("angle_x: " + str(angle_x))
+        #print("distance: " + str(distance))
+        if is_3d:
+            return float(angle_x), float(distance), float(angle_y)
+        else:
+            return float(angle_x), float(distance)
+
+
+def get_lidar_test_data():
+    angles = pd.read_csv("data/x1.csv", header=None, index_col=None)
+    angles = [float(val[0]) for val in angles.values]
+    dists = pd.read_csv("data/y1.csv", header=None, index_col=None)
+    dists = [float(val[0]) for val in dists.values]
+    #print("Angles: \n" + str(angles))
+    #print("Distances: \n" + str(distances))
+    return angles, dists
 
 
 def run(object_detector):
     global focal_length, test_with_fake_data, distances, positions, num_points_per_batch
 
     # retrieve camera parameters
-    #camera_matrix, dist_coefs, rvecs, tvecs = calibrate.calibrate_camera()
+    camera_matrix, dist_coefs, rvecs, tvecs = calibrate.calibrate_camera()
+    # compute rotation and translation matrix
+    #rvecs = cv2.Rodrigues(rvecs)
+    #tvecs = cv2.Rodrigues(tvecs)
 
-    # extract focal length of camera (there is one for x and one for y; take average)
-    #focal_length = (camera_matrix[0, 0] + camera_matrix[1, 1]) * 0.5
+    # extract focal length of camera (in pixels)
+    focal_length = (camera_matrix[0, 0] + camera_matrix[1, 1]) * 0.5
 
     # produce fake LIDAR data for testing purposes?
     if test_with_fake_data:
         produce_fake_data_threaded()
+    elif test_with_test_data:
+        angles, distances = get_lidar_test_data()
+        #print("Angles: " + str(angles))
+        #print("Distances: " + str(distances))
+        positions = [calc_image_point(angle) for angle in angles]
+        #positions = [compute_object_coord(angle, 0.0, distances[i]) for i, angle in enumerate(angles)]
+        #print("Positions: " + str(positions))
 
-    # read LIDAR data 3D coordinates from Arduino (over serial port)
+    # read LIDAR data over serial port from Arduino
     while True:
-        coords_string = " "
-        while coords_string != "":
-            try:
-                # read encoded 3D coordinate over serial port, format: (x, y, z, distance)
-                #coords_string = ser.readline()
-                #input = str(ser.readline())
+        try:
+            if test_with_test_data:  # test with real LIDAR test data?
+                time.sleep(4)  # simulate delay of receiving batch of new points
+            elif is_3d: # does LIDAR have y-movement?
+                angle_x, distance, angle_y = get_lidar_input()
+                x, y, z = compute_object_coord(angle_x, angle_y, distance)
+                positions.append((x, y, z))
+                distances.append(distance)
+            else:  # no y-movement and no test data
                 angle, distance = get_lidar_input()
                 pos = calc_image_point(float(angle))
-                # retrieve the 3D coordinate
-                #object_point = retrieve_object_coords(coords_string)
-                # store the retrieved 3D coordinate
-                #coords.append(object_point[:3])
                 positions.append(pos)
                 distances.append(distance)
-                #distances.append(object_point[3])
-            except Exception as e:
-                print(e)
+        except Exception as e:
+            print(e)
 
-            # project 3D points to the camera's 2D plane when enough points are received
-            #if len(coords) >= num_points_per_batch:
-            if len(positions) >= num_points_per_batch:
-                #imagePoints, _ = cv2.projectPoints(coords, rvec, tvec, camera_matrix, dist_coefs)
-                #print('\n3D points: {}, \n\n2D points: {}'.format(coords, imagePoints))
-                # pass the points to the object-detection script for matching to its detected bounding boxes
-                object_detector.receive_projected_points(positions, distances)
-                #coords.clear()
+        # project points to the camera's 2D view and pass them along when enough points have been received
+        if len(positions) >= num_points_per_batch:
+            if is_3d:
+                #print('\n3D LIDAR points: {}'.format(positions))
+                positions = np.array(positions)
+                positions, _ = cv2.projectPoints(positions, np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0]),
+                                                 camera_matrix, dist_coefs)
+                positions = [(point[0][0], point[0][1]) for point in positions]
+                #print('\n2D camera points: {}\n'.format(positions))
+                #print('\nDistance to points: {}\n'.format(distances))
+            # pass the points to the object-detection script for matching to its detected bounding boxes
+            object_detector.receive_projected_points(positions, distances, angles)
+            if not test_with_test_data:  # don't clear static test data
                 positions.clear()
                 distances.clear()
