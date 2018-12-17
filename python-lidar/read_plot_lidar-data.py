@@ -7,35 +7,19 @@ import pandas as pd
 ser = Serial('COM5', 9600)
 
 # Size of dots in plot should vary with loop length
-plotdot_tweak_size = 6
-loop_length = 700
+plotdot_tweak_size = 0.5
+loop_length = 2000
 
 x = []
 y = []
 
 for i in range(loop_length):
     try:
-        xval = ser.readline().decode('utf8', 'ignore').rstrip()
-        isX = 'x' == xval[0]
-        xval = xval[1:]
-
-        if isX:
-            x.append(int(xval))
-        else:
-            y.append(int(xval))
-
-        yval = ser.readline().decode('utf8', 'ignore').rstrip()
-        isY = 'y' == yval[0]
-        yval = yval[1:]
-
-        if isY:
-            y.append(int(yval))
-        else:
-            x.append(int(yval))
-
+        xval, yval = ser.readline().decode('utf8', 'ignore').rstrip().split(",")
+        x.append(float(xval))
+        y.append(int(yval))
     except ValueError:
         print("error found, unless really spamming it keeps going")
-
 
 plotX = np.array(x)
 plotY = np.array(y)
