@@ -9,7 +9,8 @@ def find_object_width(x1, x2, array_degrees, array_distances):
 	
 
 def pixels_to_degrees(pixels):
-	return pixels / (640 / 62) #pixel width / one deg pixlar
+	offset = 50
+	return pixels / (640 / 62) + offset #pixel width / one deg pixlar
 
 
 def match_with_array(deg_to_x1, deg_to_x2, array_degrees, array_distances):
