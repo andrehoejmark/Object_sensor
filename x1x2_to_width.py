@@ -18,7 +18,7 @@ def match_with_array(deg_to_x1, deg_to_x2, array_degrees, array_distances):
 	
 	lowest_distance = 100
 	for i in range(len(indexes[0])):
-		print('i' + str(i))
+		#print('i' + str(i))
 		
 		
 		dist = array_distances[indexes[0][i]]
@@ -27,7 +27,7 @@ def match_with_array(deg_to_x1, deg_to_x2, array_degrees, array_distances):
 	
 	
 	
-	#print('lowest_distance' + str(lowest_distance))
+
 	object_width = math.sqrt(lowest_distance**2 + lowest_distance**2 - 2*lowest_distance*lowest_distance*math.cos(math.radians(v)))
 	
 	return object_width
