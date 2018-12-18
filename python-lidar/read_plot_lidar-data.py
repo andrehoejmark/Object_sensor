@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 # Port to read serial data from and baudrate
-ser = Serial('COM5', 9600)
+ser = Serial('COM6', 57600)
 
 # Size of dots in plot should vary with loop length
 plotdot_tweak_size = 0.5
