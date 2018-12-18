@@ -1,11 +1,11 @@
 #include <Wire.h>
-#include <Adafruit_MotorShield.h>
 #include <LIDARLite.h>
+#include "stepper.h"
 
 /* External components Config */
 LIDARLite lidarLite;
-Adafruit_MotorShield AFMS;
-Adafruit_StepperMotor *myMotor;
+StepperMotor *myMotor;
+unsigned char coils[] = {2, 3, 4, 5};
 
 /* deltaAngle, LIDAR distance, output data and initial angle memory init */
 float dA = 0.45;
@@ -22,9 +22,9 @@ int button_4 = 0;
 /* Config custom 4-button keypad */
 void init_buttons()
 {
-  pinMode(button_1, INPUT_PULLUP);
+  /*pinMode(button_1, INPUT_PULLUP);
   pinMode(button_2, INPUT_PULLUP);
-  pinMode(button_3, INPUT_PULLUP);
+  pinMode(button_3, INPUT_PULLUP);*/
  // pinMode(button_4, INPUT_PULLUP);
 }
 
@@ -34,11 +34,11 @@ void initial_angle_setup()
   while (digitalRead(button_3))
   if (!digitalRead(button_1))
   {
-    myMotor->step(1, FORWARD, INTERLEAVE); 
+    myMotor->steppRight();
   }
   else if (!digitalRead(button_2))
   {
-    myMotor->step(1, BACKWARD, INTERLEAVE);
+    myMotor->steppLeft();
   }
 
   step_memory = 0;
@@ -48,21 +48,16 @@ void setup()
 {  
   init_buttons();
 
-  Serial.begin(9600);
+  Serial.begin(57600);
   
   /* LIDAR Config */
   lidarLite.begin(0, true);
   lidarLite.configure(0);
   
   /* Driver Config */
-  AFMS = Adafruit_MotorShield(); 
-  AFMS.begin();
+  myMotor = new StepperMotor(halfStep, coils, 0, 100);
 
-  /* Single Stepper Motor config */
-  myMotor = AFMS.getStepper(400, 1);
-  myMotor->setSpeed(10);
-
-  initial_angle_setup();
+  //initial_angle_setup();
 }
 
  boolean check_restart()
@@ -71,7 +66,7 @@ void setup()
   {
     while (step_memory >= 0)
     {
-        myMotor->step(1, BACKWARD, SINGLE);
+        myMotor->steppLeft();
         step_memory--;
     } 
     return true;
@@ -84,26 +79,30 @@ void loop() {
 
   for (int i = 0; i < 200; i++)
   {
-    if (check_restart())
-    {exit(-1);}
-    myMotor->step(1, FORWARD, SINGLE);
-    delay(10);
+    //if (check_restart())
+    //{exit(-1);}
+    myMotor->steppRight();
     dist = lidarLite.distance();
-    data = String(step_counter * dA) + String(",") + String(dist);
-    Serial.println(data);
+    //data = String(step_counter * dA) + String(",") + String(dist);
+    //Serial.println(data);
+    Serial.print(step_counter * dA);
+    Serial.print(',');
+    Serial.println(dist);
     step_counter++;
     step_memory++;
   }
 
-    for (int i = 200; i > 0; i--)
+  for (int i = 200; i > 0; i--)
   {
-    if (check_restart())
-    {exit(-1);}
-    myMotor->step(1, BACKWARD, INTERLEAVE);
-    delay(10);
+    //if (check_restart())
+    //{exit(-1);}
+    myMotor->steppLeft();
     dist = lidarLite.distance();
-    data = String(step_counter * dA) + String(",") + String(dist);
-    Serial.println(data);
+    //data = String(step_counter * dA) + String(",") + String(dist);
+    //Serial.println(data);
+    Serial.print(step_counter * dA);
+    Serial.print(',');
+    Serial.println(dist);
     step_counter--;
     step_memory--;
   }
