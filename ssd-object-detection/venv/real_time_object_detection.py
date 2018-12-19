@@ -16,11 +16,12 @@ import time
 import copy
 
 # camera size parameters
-IM_WIDTH = 1280
-IM_HEIGHT = 720
-# Use smaller resolution for slightly faster frame rate
-#IM_WIDTH = 640
-#IM_HEIGHT = 480
+IM_WIDTH = 1280  # 640
+IM_HEIGHT = 720  # 480
+ASPECT_RATIO = IM_WIDTH / IM_HEIGHT
+
+hfov = 62.2  # horizontal fov of camera
+vfov = ASPECT_RATIO * hfov  # vertical fov of camera
 
 # object detector parameters
 prototxt = "MobileNetSSD_deploy.prototxt.txt"
@@ -51,7 +52,7 @@ tick_freq = cv2.getTickFrequency()
 # indicates whether to save new bounding boxes or not
 save_new_bounding_boxes = False
 # indicates whether to run with test data or not
-test_with_test_data = True
+test_with_test_data = False
 # indicates whether this is run on Raspberry Pi or not
 run_on_raspberry = False
 
@@ -76,18 +77,19 @@ class BBox:
 class SSDObjectDetector:
 
     # called from the projection script when a new batch of points has been received & projected
-    def receive_projected_points(self, projected_object_coords, object_distances):
-        global image_points, distances, mutex, save_new_bounding_boxes
+    def receive_projected_points(self, projected_object_coords, object_distances, object_angles):
+        global image_points, distances, angles, mutex, save_new_bounding_boxes
         # acquire lock for image_points to prevent concurrent updates
         mutex.acquire()
         # make deep copies of the received data to store; since the originals will be removed after function call
         image_points = copy.deepcopy(projected_object_coords)
         distances = copy.deepcopy(object_distances)
+        angles = copy.deepcopy(object_angles)
         save_new_bounding_boxes = True
         mutex.release()
 
     def run(self):
-        global boxes, image_points, distances, mutex
+        global boxes, image_points, distances, angles, mutex
 
         if run_on_raspberry:  # run on Raspberry Pi with Pi camera
             # import picamera modules
@@ -202,6 +204,7 @@ class SSDObjectDetector:
                     if box.is_inside(point):
                         box.projected_points.append(point)
                         box.distances.append(distances[point_index])
+                        box.angles.append(angles[point_index])
                         break
 
             # determine real distance and real dimensions to every bounding box
@@ -211,11 +214,15 @@ class SSDObjectDetector:
                     continue
                 # estimate distance as the smallest distance of all the projected points within the bounding box
                 box.distance = min(box.distances)
-                # estimate real width of detected object
-                pixel_width = box.box[2] - box.box[0]
-                box.dimensions[0] = (pixel_width / projection.focal_length) * box.distance
-                # estimate real height of detected object
+                box.angles.sort()
+                box.angle = box.angles[-1] - box.angles[0]
+                b_sq = box.distance ** 2  # c == b approximately
+                # estimate real dimensions of detected object
+                # formula: a^2 = b^2 + c^2 - 2 * b * c * cos(alpha)
+                box.dimensions[0] = np.sqrt(b_sq + b_sq - 2.0 * b_sq * np.cos(box.angle))
                 box.dimensions[1] = (box.pixel_dimensions[1] / box.pixel_dimensions[0]) * box.dimensions[0]
+                # alternative method to get real dimensions
+                #self.calc_and_store_dims(box)
 
             # wait for next batch of points from background thread
             image_points.clear()
@@ -229,8 +236,7 @@ class SSDObjectDetector:
                 continue
             x = box.box[0] - 20
             y = box.box[1] + 20
-            #print("Distances in box:" + str(box.distances))
-            #print("Points in box:" + str(box.projected_points))
+
             label = "W:{:.2f}, H:{:.2f}, D:{:.2f}".format(box.dimensions[0],
                                                         box.dimensions[1],
                                                         box.distance)
@@ -238,9 +244,6 @@ class SSDObjectDetector:
 
             # plot the projected points on the bounding box for debugging purposes
             for index, point in enumerate(box.projected_points):
-                # print("Point: " + str(point))
-                # print("Distance: " + str(box.distances[index]))
-                # print("Min distance" + str(box.distance))
                 cv2.circle(frame, (int(point[0]), int(point[1])), 2, (0, 255, 255), 1)
 
         # calculate and display the fps
@@ -258,6 +261,12 @@ class SSDObjectDetector:
         if key == ord("q"):
             return False
         return True
+
+    def calc_and_store_dims(self, box):
+        # calculates and stores real dimensions of box
+        alpha = (box.pixel_dimensions[1] / IM_HEIGHT) * vfov
+        box.dimensions[1] = np.tan(alpha) * box.distance
+        box.dimensions[0] = (box.pixel_dimensions[0] / box.pixel_dimensions[1]) * box.dimensions[1]
 
 
 if __name__ == '__main__':

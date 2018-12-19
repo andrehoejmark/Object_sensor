@@ -19,39 +19,36 @@ from threading import Lock
 import calibrate
 
 # global variables and constants
-num_points_per_batch = 180  # send this many points at a time
-inches_per_meter = 39.3700787
-inches_per_cm = inches_per_meter / 100.0
-pixels_per_inches = 96.0
-fov = 62.2  # horizon§tal fov of camera
-fov_half = fov / 2.0
-image_width = 1280  # 480.0
-image_height = 720  # 640.0
+IM_WIDTH = 1280  # 640
+IM_HEIGHT = 720  # 480
+fov = 62.2  # horizontal fov of camera
+num_points_per_batch = 138  # send this many points at a time (one "round" across the fov)
 
-dist_lidar_to_cam_meter = 0.002  # +2 cm between camera lens center to LIDAR laser output
-image_point_y = image_height / 2.0 + dist_lidar_to_cam_meter * inches_per_meter * pixels_per_inches  # constant
-focal_length = 0.0
-offset_angle = 0.0
+image_point_y = IM_HEIGHT / 2.0 + 10.0  # constant
+focal_length = 0.0  # focal length of camera in pixels
+offset_angle = 59.0  # offset of camera fov and LIDAR starting-angle
 
 ser = None  # the serial port
 
-positions = []  # the angles associated with each point
+positions = []  # the image positions associated with each point
 distances = []  # the distances associated with each point
+angles = []  # the angles associated with each point
 
 
 def calc_image_point(angle):
-    # set 0 angle at center of image since angle is 0-180 left to right
-    image_point_x = image_width - (((angle - offset_angle) / fov) * image_width)
+    # calculates and returns the image point associated with angle
+    image_point_x = IM_WIDTH - (((angle - offset_angle) / fov) * IM_WIDTH)
     return int(image_point_x), int(image_point_y)
 
 
 def get_lidar_input():
-    # returns LIDAR data
+    # returns LIDAR data for one point
     global ser
     if ser is None:
-        # the serial port over which to receive LIDAR data
+        # initialize the serial port over which to receive LIDAR data
         ser = serial.Serial('/dev/ttyACM0', baudrate=9600)
     try:
+        # read data for one point
         angle, distance = ser.readline().decode('utf8', 'ignore').rstrip().split(",")
     except ValueError as err:
         print(err)
@@ -60,7 +57,7 @@ def get_lidar_input():
 
 
 def run(object_detector):
-    global focal_length, test_with_fake_data, distances, positions, num_points_per_batch
+    global focal_length, distances, positions, num_points_per_batch
     # retrieve camera parameters
     camera_matrix, dist_coefs, rvecs, tvecs = calibrate.calibrate_camera()
     # extract focal length of camera (in pixels)
@@ -75,13 +72,14 @@ def run(object_detector):
             x, y = calc_image_point(float(angle))
             positions.append((x, y))
             distances.append(distance)
+            angles.append(angle)
         except Exception as err:
             print(err)
 
         # batch up x points
         if len(positions) >= num_points_per_batch:
-            # pass the points to the object detector
-            object_detector.receive_points(positions, distances)
+            # pass the points to the object detector and then clear lists for next batch
+            object_detector.receive_points(positions, distances, angles)
             positions.clear()
             distances.clear()
-
+            angles.clear()
