@@ -62,10 +62,15 @@ void loop()
 	
 	if(current_degree > end_degree)
 		rotate_clock_wise = true;
-		Serial.println("None")
+		Serial.print("None");
+  		Serial.print(',');
+  		Serial.println("None");
 	if(current_degree < start_degree)
 		rotate_clock_wise = false;
-		Serial.println("None")
+		Serial.print("None");
+  		Serial.print(',');
+  		Serial.println("None");
+		
 
   delay(5);
 }
