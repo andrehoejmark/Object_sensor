@@ -32,8 +32,8 @@ void setup()
 
   for (;current_degree < start_degree; current_degree += 0.45)
   {
-	  myMotor->steppLeft();
-    delay(5);
+	myMotor->steppLeft();
+    	delay(5);
   }
   delay(5000);
 }
@@ -43,10 +43,9 @@ void setup()
 void loop() 
 {
 	distance = lidarLite.distance();
-	//data = String(current_degree) + String(",") + String(distance);
-  Serial.print(current_degree);
-  Serial.print(',');
-  Serial.println(distance);
+  	Serial.print(current_degree);
+  	Serial.print(',');
+  	Serial.println(distance);
 	//Serial.println(data);
 	
 	if(rotate_clock_wise)
@@ -63,8 +62,10 @@ void loop()
 	
 	if(current_degree > end_degree)
 		rotate_clock_wise = true;
+		Serial.println("None")
 	if(current_degree < start_degree)
 		rotate_clock_wise = false;
+		Serial.println("None")
 
   delay(5);
 }
