@@ -1,3 +1,4 @@
 # DAT066
 
-![img_0069](https://user-images.githubusercontent.com/24205488/51334279-ccc2d480-1a7f-11e9-8f15-120413587f2d.JPG)
+![untitled](https://user-images.githubusercontent.com/24205488/51334440-157a8d80-1a80-11e9-89d6-2fd8c90eb14c.png)
+
