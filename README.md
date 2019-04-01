@@ -1,4 +1,4 @@
-<h4> Simple distance, width & height of objects in the surroundings. </h4>
+<h4> Simple distance, width & height of nearby objects. </h4>
 
 
 ![123](https://user-images.githubusercontent.com/24205488/51334799-ddc01580-1a80-11e9-8d85-aa23aefb2eb9.jpg)
